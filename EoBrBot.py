@@ -2,10 +2,11 @@ import os
 import telebot
 import feedparser
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 import re
 from html import unescape
 from dotenv import load_dotenv
+import json
 
 # Carrega variáveis de ambiente
 load_dotenv()
@@ -14,7 +15,9 @@ load_dotenv()
 BOT_TOKEN = os.getenv('7637289473:AAFiefB-2Am56-GcleFjgp_nBK-5P51kNLo')
 CHANNEL_USERNAME = '@esperantobr'
 RSS_URL = 'https://pma.brazilo.org/na-rede/feed'
-CHECK_INTERVAL = 300
+CHECK_INTERVAL = 300  # 5 minutos
+HISTORY_FILE = 'posted_links.json'
+MAX_HISTORY = 100  # Número máximo de links para manter no histórico
 
 # Inicializa o bot
 try:
@@ -24,6 +27,25 @@ try:
 except Exception as e:
     print(f"Erro ao iniciar bot: {str(e)}")
     raise e
+
+def load_posted_links():
+    """Carrega o histórico de links já postados"""
+    try:
+        if os.path.exists(HISTORY_FILE):
+            with open(HISTORY_FILE, 'r') as f:
+                return json.load(f)
+        return []
+    except Exception as e:
+        print(f"Erro ao carregar histórico: {str(e)}")
+        return []
+
+def save_posted_links(links):
+    """Salva o histórico de links já postados"""
+    try:
+        with open(HISTORY_FILE, 'w') as f:
+            json.dump(links[-MAX_HISTORY:], f)  # Mantém apenas os últimos MAX_HISTORY links
+    except Exception as e:
+        print(f"Erro ao salvar histórico: {str(e)}")
 
 def clean_html(text):
     """Remove tags HTML e formata o texto"""
@@ -75,7 +97,24 @@ def check_and_send_updates():
         
         print(f"Encontradas {len(feed.entries)} entradas no feed")
         
-        for entry in feed.entries[:5]:
+        # Carrega links já postados
+        posted_links = load_posted_links()
+        
+        # Filtra apenas entradas novas
+        new_entries = [
+            entry for entry in feed.entries 
+            if entry.link not in posted_links and
+            hasattr(entry, 'published_parsed') and
+            datetime.fromtimestamp(time.mktime(entry.published_parsed)) > datetime.now() - timedelta(days=7)
+        ]
+        
+        if not new_entries:
+            print("Nenhuma entrada nova para postar")
+            return
+            
+        print(f"Encontradas {len(new_entries)} entradas novas")
+        
+        for entry in new_entries[:5]:  # Processa até 5 entradas novas por vez
             try:
                 message = format_message(entry)
                 if message:
@@ -87,7 +126,12 @@ def check_and_send_updates():
                         disable_web_page_preview=False
                     )
                     print("✓ Mensagem enviada com sucesso!")
-                    time.sleep(2)
+                    
+                    # Adiciona link ao histórico
+                    posted_links.append(entry.link)
+                    save_posted_links(posted_links)
+                    
+                    time.sleep(2)  # Evita flood
                 
             except Exception as e:
                 print(f"✗ Erro ao enviar mensagem: {str(e)}")
