@@ -1,13 +1,17 @@
+import os
 import telebot
 import feedparser
 import time
 from datetime import datetime
-import hashlib
 import re
 from html import unescape
+from dotenv import load_dotenv
+
+# Carrega variáveis de ambiente
+load_dotenv()
 
 # Configure seu bot
-BOT_TOKEN = '7637289473:AAFiefB-2Am56-GcleFjgp_nBK-5P51kNLo'  # Substitua pelo seu token
+BOT_TOKEN = os.getenv('7637289473:AAFiefB-2Am56-GcleFjgp_nBK-5P51kNLo')
 CHANNEL_USERNAME = '@esperantobr'
 RSS_URL = 'https://pma.brazilo.org/na-rede/feed'
 CHECK_INTERVAL = 300
@@ -19,27 +23,20 @@ try:
     print("Bot iniciado com sucesso!")
 except Exception as e:
     print(f"Erro ao iniciar bot: {str(e)}")
-    input("Pressione Enter para sair...")
-    exit()
+    raise e
 
 def clean_html(text):
     """Remove tags HTML e formata o texto"""
-    # Remove tags HTML
     text = re.sub(r'<[^>]+>', '', text)
-    # Converte entidades HTML
     text = unescape(text)
-    # Remove múltiplas linhas em branco
     text = re.sub(r'\n\s*\n', '\n\n', text)
-    # Remove espaços extras
     text = re.sub(r'\s+', ' ', text)
     return text.strip()
 
 def format_message(entry):
     try:
-        # Título formatado em negrito
         message = f"*{entry.title}*\n\n"
         
-        # Trata o conteúdo
         if hasattr(entry, 'content'):
             content = entry.content[0].value
         elif hasattr(entry, 'description'):
@@ -47,22 +44,16 @@ def format_message(entry):
         else:
             content = ""
             
-        # Limpa e formata o conteúdo
         content = clean_html(content)
         
-        # Limita o tamanho do conteúdo (Telegram tem limite de 4096 caracteres)
         if len(content) > 800:
             content = content[:800] + "..."
             
         message += f"{content}\n\n"
-        
-        # Adiciona link para o post completo
         message += f"[Leia o post completo]({entry.link})"
         
-        # Adiciona data de publicação se disponível
         if hasattr(entry, 'published'):
             try:
-                # Converte a data para formato mais amigável
                 date = datetime.strptime(entry.published, '%a, %d %b %Y %H:%M:%S %z')
                 message += f"\n\nPublicado em: {date.strftime('%d/%m/%Y %H:%M')}"
             except:
@@ -109,21 +100,14 @@ def main():
     print(f"Canal: {CHANNEL_USERNAME}")
     print(f"Feed: {RSS_URL}")
     print(f"Intervalo de verificação: {CHECK_INTERVAL} segundos")
-    print("\nPressione Ctrl+C para encerrar o bot")
-    print("\nIniciando monitoramento do feed...")
     
-    try:
-        while True:
+    while True:
+        try:
             check_and_send_updates()
-            for i in range(CHECK_INTERVAL, 0, -1):
-                print(f"\rPróxima verificação em {i} segundos...", end="")
-                time.sleep(1)
-    except KeyboardInterrupt:
-        print("\n\nBot encerrado pelo usuário")
-        input("\nPressione Enter para sair...")
-    except Exception as e:
-        print(f"\nErro inesperado: {str(e)}")
-        input("\nPressione Enter para sair...")
+            time.sleep(CHECK_INTERVAL)
+        except Exception as e:
+            print(f"Erro no loop principal: {str(e)}")
+            time.sleep(60)  # Espera 1 minuto antes de tentar novamente
 
 if __name__ == "__main__":
     main()
