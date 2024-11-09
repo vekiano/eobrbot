@@ -11,41 +11,33 @@ import json
 # Carrega variáveis de ambiente
 load_dotenv()
 
-# Configure seu bot
-BOT_TOKEN = os.getenv('7637289473:AAFiefB-2Am56-GcleFjgp_nBK-5P51kNLo')
+# Configurações do bot
+BOT_TOKEN = os.getenv('BOT_TOKEN')  # Token deve ser configurado no Railway
 CHANNEL_USERNAME = '@esperantobr'
 RSS_URL = 'https://pma.brazilo.org/na-rede/feed'
 CHECK_INTERVAL = 300  # 5 minutos
-HISTORY_FILE = 'posted_links.json'
-MAX_HISTORY = 100  # Número máximo de links para manter no histórico
+TEMP_FILE = '/tmp/last_check.json'  # Arquivo temporário para controle
 
-# Inicializa o bot
-try:
-    print("Iniciando bot...")
-    bot = telebot.TeleBot(BOT_TOKEN)
-    print("Bot iniciado com sucesso!")
-except Exception as e:
-    print(f"Erro ao iniciar bot: {str(e)}")
-    raise e
-
-def load_posted_links():
-    """Carrega o histórico de links já postados"""
+def load_last_check():
+    """Carrega a data da última verificação"""
     try:
-        if os.path.exists(HISTORY_FILE):
-            with open(HISTORY_FILE, 'r') as f:
-                return json.load(f)
-        return []
-    except Exception as e:
-        print(f"Erro ao carregar histórico: {str(e)}")
-        return []
+        if os.path.exists(TEMP_FILE):
+            with open(TEMP_FILE, 'r') as f:
+                data = json.load(f)
+                return datetime.fromisoformat(data['last_check'])
+    except:
+        pass
+    return datetime.now() - timedelta(hours=1)
 
-def save_posted_links(links):
-    """Salva o histórico de links já postados"""
+def save_last_check():
+    """Salva a data da última verificação"""
     try:
-        with open(HISTORY_FILE, 'w') as f:
-            json.dump(links[-MAX_HISTORY:], f)  # Mantém apenas os últimos MAX_HISTORY links
-    except Exception as e:
-        print(f"Erro ao salvar histórico: {str(e)}")
+        with open(TEMP_FILE, 'w') as f:
+            json.dump({
+                'last_check': datetime.now().isoformat()
+            }, f)
+    except:
+        pass
 
 def clean_html(text):
     """Remove tags HTML e formata o texto"""
@@ -56,9 +48,12 @@ def clean_html(text):
     return text.strip()
 
 def format_message(entry):
+    """Formata a mensagem para o Telegram"""
     try:
+        # Título
         message = f"*{entry.title}*\n\n"
         
+        # Conteúdo
         if hasattr(entry, 'content'):
             content = entry.content[0].value
         elif hasattr(entry, 'description'):
@@ -68,16 +63,20 @@ def format_message(entry):
             
         content = clean_html(content)
         
+        # Limita tamanho do conteúdo
         if len(content) > 800:
             content = content[:800] + "..."
             
         message += f"{content}\n\n"
+        
+        # Adiciona link
         message += f"[Leia o post completo]({entry.link})"
         
+        # Adiciona data se disponível
         if hasattr(entry, 'published'):
             try:
                 date = datetime.strptime(entry.published, '%a, %d %b %Y %H:%M:%S %z')
-                message += f"\n\nPublicado em: {date.strftime('%d/%m/%Y %H:%M')}"
+                message += f"\n\n📅 {date.strftime('%d/%m/%Y %H:%M')}"
             except:
                 pass
         
@@ -86,71 +85,72 @@ def format_message(entry):
         print(f"Erro ao formatar mensagem: {str(e)}")
         return None
 
-def check_and_send_updates():
+def check_and_send_updates(bot):
+    """Verifica e envia atualizações do feed"""
     try:
-        print(f"\nVerificando feed RSS em: {datetime.now().strftime('%H:%M:%S')}")
-        feed = feedparser.parse(RSS_URL)
+        last_check = load_last_check()
+        print(f"\n📥 Verificando feed RSS em: {datetime.now().strftime('%H:%M:%S')}")
         
+        feed = feedparser.parse(RSS_URL)
         if not feed.entries:
             print("Nenhuma entrada encontrada no feed")
             return
         
-        print(f"Encontradas {len(feed.entries)} entradas no feed")
-        
-        # Carrega links já postados
-        posted_links = load_posted_links()
-        
-        # Filtra apenas entradas novas
-        new_entries = [
-            entry for entry in feed.entries 
-            if entry.link not in posted_links and
-            hasattr(entry, 'published_parsed') and
-            datetime.fromtimestamp(time.mktime(entry.published_parsed)) > datetime.now() - timedelta(days=7)
-        ]
+        new_entries = []
+        for entry in feed.entries:
+            if hasattr(entry, 'published_parsed'):
+                pub_date = datetime.fromtimestamp(time.mktime(entry.published_parsed))
+                if pub_date > last_check:
+                    new_entries.append(entry)
         
         if not new_entries:
-            print("Nenhuma entrada nova para postar")
+            print("Nenhuma entrada nova encontrada")
             return
             
-        print(f"Encontradas {len(new_entries)} entradas novas")
+        print(f"📬 Encontradas {len(new_entries)} entradas novas")
         
-        for entry in new_entries[:5]:  # Processa até 5 entradas novas por vez
+        for entry in new_entries[:5]:  # Processa até 5 entradas por vez
             try:
                 message = format_message(entry)
                 if message:
-                    print(f"\nEnviando: {entry.title}")
+                    print(f"\n📤 Enviando: {entry.title}")
                     bot.send_message(
                         chat_id=CHANNEL_USERNAME,
                         text=message,
                         parse_mode='Markdown',
                         disable_web_page_preview=False
                     )
-                    print("✓ Mensagem enviada com sucesso!")
-                    
-                    # Adiciona link ao histórico
-                    posted_links.append(entry.link)
-                    save_posted_links(posted_links)
-                    
+                    print("✅ Mensagem enviada com sucesso!")
                     time.sleep(2)  # Evita flood
                 
             except Exception as e:
-                print(f"✗ Erro ao enviar mensagem: {str(e)}")
+                print(f"❌ Erro ao enviar mensagem: {str(e)}")
+        
+        save_last_check()
                 
     except Exception as e:
-        print(f"Erro ao verificar feed: {str(e)}")
+        print(f"❌ Erro ao verificar feed: {str(e)}")
 
 def main():
+    """Função principal"""
     print("\n=== Bot RSS do Esperanto Brasil ===")
-    print(f"Canal: {CHANNEL_USERNAME}")
-    print(f"Feed: {RSS_URL}")
-    print(f"Intervalo de verificação: {CHECK_INTERVAL} segundos")
+    print(f"📢 Canal: {CHANNEL_USERNAME}")
+    print(f"🔗 Feed: {RSS_URL}")
+    print(f"⏱️ Intervalo: {CHECK_INTERVAL} segundos")
+    
+    try:
+        bot = telebot.TeleBot(BOT_TOKEN)
+        print("✅ Bot iniciado com sucesso!")
+    except Exception as e:
+        print(f"❌ Erro ao iniciar bot: {str(e)}")
+        return
     
     while True:
         try:
-            check_and_send_updates()
+            check_and_send_updates(bot)
             time.sleep(CHECK_INTERVAL)
         except Exception as e:
-            print(f"Erro no loop principal: {str(e)}")
+            print(f"❌ Erro no loop principal: {str(e)}")
             time.sleep(60)  # Espera 1 minuto antes de tentar novamente
 
 if __name__ == "__main__":
