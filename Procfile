@@ -1,1 +1,1 @@
-worker: python EoBrBot.py
+web: python EoBrBot.py
