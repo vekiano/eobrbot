@@ -25,7 +25,18 @@ bot = telebot.TeleBot(BOT_TOKEN, threaded=False)
 posted_links = deque(maxlen=1000)
 last_check = datetime.now() - timedelta(hours=1)
 
+def remove_webhook():
+    """Remove webhook se existir"""
+    try:
+        print("Removendo webhook...")
+        bot.delete_webhook()
+        time.sleep(1)
+        print("Webhook removido com sucesso!")
+    except Exception as e:
+        print(f"Erro ao remover webhook: {str(e)}")
+
 def clean_html(text):
+    """Remove tags HTML e formata o texto"""
     text = re.sub(r'<[^>]+>', '', text)
     text = unescape(text)
     text = re.sub(r'\n\s*\n', '\n\n', text)
@@ -33,6 +44,7 @@ def clean_html(text):
     return text.strip()
 
 def format_message(entry, source_name):
+    """Formata a mensagem para o Telegram"""
     try:
         message = f"*{entry.title}*\n"
         message += f"📰 Via {source_name}\n\n"
@@ -65,6 +77,7 @@ def format_message(entry, source_name):
 
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
+    """Manipula o comando /start"""
     bot.reply_to(message, """
 Bonvenon al la EoBr-Bot! 🌟
 
@@ -75,6 +88,7 @@ Uzu /help por vidi ĉiujn komandojn.
 
 @bot.message_handler(commands=['help'])
 def send_help(message):
+    """Manipula o comando /help"""
     bot.reply_to(message, """
 Disponaj komandoj:
 
@@ -87,6 +101,7 @@ Disponaj komandoj:
 
 @bot.message_handler(commands=['feeds'])
 def show_feeds(message):
+    """Manipula o comando /feeds"""
     feeds_text = "Aktivaj fontoj de novaĵoj:\n\n"
     for name, url in FEEDS.items():
         feeds_text += f"📰 {name}\n{url}\n\n"
@@ -94,6 +109,7 @@ def show_feeds(message):
 
 @bot.message_handler(commands=['about'])
 def send_about(message):
+    """Manipula o comando /about"""
     bot.reply_to(message, """
 EoBr-Bot - RSS-Roboto por Esperanto-Novaĵoj
 
@@ -104,6 +120,7 @@ Programita de @vekiano
 
 @bot.message_handler(commands=['status'])
 def send_status(message):
+    """Manipula o comando /status"""
     status = f"""
 Bot Status:
 
@@ -116,15 +133,19 @@ Bot Status:
     bot.reply_to(message, status)
 
 def check_feeds():
+    """Verifica e processa feeds RSS"""
     global last_check
     current_time = datetime.now()
+    print(f"\n📥 Verificando feeds em: {current_time.strftime('%H:%M:%S')}")
     
     for feed_name, feed_url in FEEDS.items():
         try:
             feed = feedparser.parse(feed_url)
             if not feed.entries:
+                print(f"Nenhuma entrada encontrada em: {feed_name}")
                 continue
             
+            print(f"Processando {feed_name}...")
             for entry in feed.entries[:5]:
                 if hasattr(entry, 'published_parsed') and hasattr(entry, 'link'):
                     pub_date = datetime.fromtimestamp(time.mktime(entry.published_parsed))
@@ -133,6 +154,7 @@ def check_feeds():
                         message = format_message(entry, feed_name)
                         if message:
                             try:
+                                print(f"Enviando: {entry.title}")
                                 bot.send_message(
                                     chat_id="@eobr_bot",
                                     text=message,
@@ -140,35 +162,49 @@ def check_feeds():
                                     disable_web_page_preview=False
                                 )
                                 posted_links.append(entry.link)
-                                time.sleep(2)
+                                print("✅ Mensagem enviada com sucesso!")
+                                time.sleep(2)  # Evita flood
                             except Exception as e:
-                                print(f"Erro ao enviar mensagem: {str(e)}")
+                                print(f"❌ Erro ao enviar mensagem: {str(e)}")
                                 
         except Exception as e:
-            print(f"Erro ao processar feed {feed_name}: {str(e)}")
+            print(f"❌ Erro ao processar feed {feed_name}: {str(e)}")
             continue
     
     last_check = current_time
+    print(f"✅ Verificação concluída em: {datetime.now().strftime('%H:%M:%S')}")
 
 def main():
+    """Função principal"""
     print("\n=== EoBr-Bot - RSS-Roboto por Esperanto-Novaĵoj ===")
     print(f"📢 Bot: {BOT_USERNAME}")
     print(f"🔗 RSS-Fluoj: {len(FEEDS)} configuritaj")
     print(f"⏱️ Intervalo: {CHECK_INTERVAL} segundos")
     
+    # Remove webhook antes de iniciar
+    remove_webhook()
+    
     while True:
         try:
-            # Verifica atualizações do bot
-            bot.polling(non_stop=False, interval=0, timeout=30)
-            
-            # Verifica feeds
+            # Verifica feeds primeiro
             check_feeds()
             
+            try:
+                # Processa mensagens do bot
+                print("\n👂 Aguardando comandos...")
+                bot.polling(non_stop=False, interval=1, timeout=20)
+            except Exception as e:
+                print(f"❌ Erro no polling: {str(e)}")
+                time.sleep(5)
+                remove_webhook()
+            
             # Aguarda próximo ciclo
+            print(f"\n⏰ Aguardando {CHECK_INTERVAL} segundos...")
             time.sleep(CHECK_INTERVAL)
+            
         except Exception as e:
-            print(f"Erro: {str(e)}")
-            time.sleep(60)  # Espera 1 minuto antes de tentar novamente
+            print(f"❌ Erro geral: {str(e)}")
+            time.sleep(60)  # Aguarda 1 minuto antes de tentar novamente
 
 if __name__ == "__main__":
     main()
