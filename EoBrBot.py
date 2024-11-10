@@ -10,6 +10,7 @@ from collections import deque
 # Configurações do bot
 BOT_TOKEN = os.getenv('BOT_TOKEN')
 BOT_USERNAME = '@eobr_bot'
+CHANNEL_ID = '@esperantobr'  # Canal principal
 CHECK_INTERVAL = 300  # 5 minutos
 
 # Lista de feeds
@@ -23,7 +24,7 @@ FEEDS = {
 # Inicialização
 bot = telebot.TeleBot(BOT_TOKEN, threaded=False)
 posted_links = deque(maxlen=1000)
-last_check = datetime.now() - timedelta(hours=1)
+last_check = datetime.now() - timedelta(days=1)  # Aumentado para 1 dia para pegar posts mais antigos
 
 def remove_webhook():
     """Remove webhook se existir"""
@@ -75,21 +76,44 @@ def format_message(entry, source_name):
         print(f"Erro ao formatar mensagem: {str(e)}")
         return None
 
+def send_message_to_all(message_text, retry_count=3):
+    """Envia mensagem para todos os destinos com retry"""
+    destinations = [BOT_USERNAME, CHANNEL_ID]
+    
+    for destination in destinations:
+        for attempt in range(retry_count):
+            try:
+                bot.send_message(
+                    chat_id=destination,
+                    text=message_text,
+                    parse_mode='Markdown',
+                    disable_web_page_preview=False
+                )
+                print(f"✅ Mensagem enviada com sucesso para {destination}")
+                break
+            except Exception as e:
+                print(f"❌ Tentativa {attempt + 1} falhou para {destination}: {str(e)}")
+                if attempt < retry_count - 1:
+                    time.sleep(5)  # Espera 5 segundos antes de tentar novamente
+                continue
+        time.sleep(2)  # Intervalo entre envios para diferentes destinos
+
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
     """Manipula o comando /start"""
-    bot.reply_to(message, """
+    welcome_text = """
 Bonvenon al la EoBr-Bot! 🌟
 
 Mi estas roboto kiu aŭtomate kolektas kaj dissendas Esperantajn novaĵojn.
 
 Uzu /help por vidi ĉiujn komandojn.
-    """)
+    """
+    bot.reply_to(message, welcome_text)
 
 @bot.message_handler(commands=['help'])
 def send_help(message):
     """Manipula o comando /help"""
-    bot.reply_to(message, """
+    help_text = """
 Disponaj komandoj:
 
 /start - Komenci la boton
@@ -97,7 +121,9 @@ Disponaj komandoj:
 /feeds - Montri ĉiujn fontojn de novaĵoj
 /about - Pri la boto
 /status - Montri la staton de la boto
-    """)
+/force_check - Devigi kontroli la fluojn
+    """
+    bot.reply_to(message, help_text)
 
 @bot.message_handler(commands=['feeds'])
 def show_feeds(message):
@@ -125,12 +151,20 @@ def send_status(message):
 Bot Status:
 
 📡 Bot: {BOT_USERNAME}
+📢 Canal: {CHANNEL_ID}
 🕒 Última verificação: {last_check.strftime('%d/%m/%Y %H:%M:%S')}
 📚 Links processados: {len(posted_links)}
 📰 Feeds monitorados: {len(FEEDS)}
 ⏱️ Intervalo: {CHECK_INTERVAL} segundos
     """
     bot.reply_to(message, status)
+
+@bot.message_handler(commands=['force_check'])
+def force_check(message):
+    """Força uma verificação imediata dos feeds"""
+    bot.reply_to(message, "Iniciando verificação forçada dos feeds...")
+    check_feeds()
+    bot.reply_to(message, "Verificação concluída!")
 
 def check_feeds():
     """Verifica e processa feeds RSS"""
@@ -155,15 +189,8 @@ def check_feeds():
                         if message:
                             try:
                                 print(f"Enviando: {entry.title}")
-                                bot.send_message(
-                                    chat_id="@eobr_bot",
-                                    text=message,
-                                    parse_mode='Markdown',
-                                    disable_web_page_preview=False
-                                )
+                                send_message_to_all(message)
                                 posted_links.append(entry.link)
-                                print("✅ Mensagem enviada com sucesso!")
-                                time.sleep(2)  # Evita flood
                             except Exception as e:
                                 print(f"❌ Erro ao enviar mensagem: {str(e)}")
                                 
@@ -178,25 +205,24 @@ def main():
     """Função principal"""
     print("\n=== EoBr-Bot - RSS-Roboto por Esperanto-Novaĵoj ===")
     print(f"📢 Bot: {BOT_USERNAME}")
+    print(f"📢 Canal: {CHANNEL_ID}")
     print(f"🔗 RSS-Fluoj: {len(FEEDS)} configuritaj")
     print(f"⏱️ Intervalo: {CHECK_INTERVAL} segundos")
     
     # Remove webhook antes de iniciar
     remove_webhook()
     
+    # Primeira verificação imediata
+    check_feeds()
+    
     while True:
         try:
-            # Verifica feeds primeiro
-            check_feeds()
+            # Processa mensagens do bot
+            print("\n👂 Aguardando comandos...")
+            bot.polling(non_stop=False, interval=1, timeout=20)
             
-            try:
-                # Processa mensagens do bot
-                print("\n👂 Aguardando comandos...")
-                bot.polling(non_stop=False, interval=1, timeout=20)
-            except Exception as e:
-                print(f"❌ Erro no polling: {str(e)}")
-                time.sleep(5)
-                remove_webhook()
+            # Verifica feeds periodicamente
+            check_feeds()
             
             # Aguarda próximo ciclo
             print(f"\n⏰ Aguardando {CHECK_INTERVAL} segundos...")
@@ -204,7 +230,8 @@ def main():
             
         except Exception as e:
             print(f"❌ Erro geral: {str(e)}")
-            time.sleep(60)  # Aguarda 1 minuto antes de tentar novamente
+            time.sleep(60)
+            remove_webhook()
 
 if __name__ == "__main__":
     main()
