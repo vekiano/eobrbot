@@ -5,23 +5,13 @@ import time
 from datetime import datetime, timedelta
 import re
 from html import unescape
-from dotenv import load_dotenv
 import json
-import threading
-import sys
-import signal
-import fcntl
-
-# Carrega variáveis de ambiente
-load_dotenv()
+from threading import Lock
 
 # Configurações do bot
 BOT_TOKEN = os.getenv('BOT_TOKEN')
 BOT_USERNAME = '@eobr_bot'
 CHECK_INTERVAL = 300  # 5 minutos
-TEMP_FILE = '/tmp/last_check.json'
-HISTORY_FILE = '/tmp/posted_links.json'
-LOCK_FILE = '/tmp/eobrbot.lock'
 
 # Lista de feeds
 FEEDS = {
@@ -31,52 +21,11 @@ FEEDS = {
     'Brazilaj Babiladoj': 'https://brazilajbabiladoj.blogspot.com/feeds/posts/default'
 }
 
-def load_posted_links():
-    """Carrega histórico de links já postados"""
-    try:
-        if os.path.exists(HISTORY_FILE):
-            with open(HISTORY_FILE, 'r') as f:
-                return json.load(f)
-    except:
-        pass
-    return []
-
-def save_posted_link(link):
-    """Salva link no histórico"""
-    try:
-        links = load_posted_links()
-        if link not in links:
-            links.append(link)
-            links = links[-100:]  # Mantém apenas os últimos 100 links
-            with open(HISTORY_FILE, 'w') as f:
-                json.dump(links, f)
-    except Exception as e:
-        print(f"Erro ao salvar link: {str(e)}")
-
-def is_already_posted(link):
-    """Verifica se o link já foi postado"""
-    return link in load_posted_links()
-
-def load_last_check():
-    """Carrega a data da última verificação"""
-    try:
-        if os.path.exists(TEMP_FILE):
-            with open(TEMP_FILE, 'r') as f:
-                data = json.load(f)
-                return datetime.fromisoformat(data['last_check'])
-    except:
-        pass
-    return datetime.now() - timedelta(hours=1)
-
-def save_last_check():
-    """Salva a data da última verificação"""
-    try:
-        with open(TEMP_FILE, 'w') as f:
-            json.dump({
-                'last_check': datetime.now().isoformat()
-            }, f)
-    except Exception as e:
-        print(f"Erro ao salvar última verificação: {str(e)}")
+# Inicialização do bot com configurações específicas para evitar conflitos
+bot = telebot.TeleBot(BOT_TOKEN)
+last_check = datetime.now() - timedelta(hours=1)
+posted_links = set()
+lock = Lock()
 
 def clean_html(text):
     """Remove tags HTML e formata o texto"""
@@ -125,154 +74,118 @@ def format_message(entry, source_name):
         print(f"Erro ao formatar mensagem: {str(e)}")
         return None
 
-class SingleInstanceBot:
-    def __init__(self):
-        self.lockfile = open(LOCK_FILE, 'w')
-        try:
-            fcntl.lockf(self.lockfile, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except IOError:
-            print("Outra instância do bot já está rodando!")
-            sys.exit(1)
-        
-        signal.signal(signal.SIGTERM, self.cleanup)
-        signal.signal(signal.SIGINT, self.cleanup)
-        
-        self.bot = telebot.TeleBot(BOT_TOKEN)
-        self.setup_handlers()
-        
-    def cleanup(self, *args):
-        print("\nEncerrando bot...")
-        try:
-            self.bot.stop_polling()
-            fcntl.lockf(self.lockfile, fcntl.LOCK_UN)
-            self.lockfile.close()
-            os.unlink(LOCK_FILE)
-        except:
-            pass
-        sys.exit(0)
-        
-    def setup_handlers(self):
-        @self.bot.message_handler(commands=['start'])
-        def send_welcome(message):
-            welcome_text = """
+@bot.message_handler(commands=['start'])
+def send_welcome(message):
+    welcome_text = """
 Bonvenon al la EoBr-Bot! 🌟
 
 Mi estas roboto kiu aŭtomate kolektas kaj dissendas Esperantajn novaĵojn.
 
 Uzu /help por vidi ĉiujn komandojn.
-            """
-            self.bot.reply_to(message, welcome_text)
+    """
+    bot.reply_to(message, welcome_text)
 
-        @self.bot.message_handler(commands=['help'])
-        def send_help(message):
-            help_text = """
+@bot.message_handler(commands=['help'])
+def send_help(message):
+    help_text = """
 Disponaj komandoj:
 
 /start - Komenci la boton
 /help - Montri ĉi tiun helpon
 /feeds - Montri ĉiujn fontojn de novaĵoj
 /about - Pri la boto
-            """
-            self.bot.reply_to(message, help_text)
+/status - Montri la staton de la boto
+    """
+    bot.reply_to(message, help_text)
 
-        @self.bot.message_handler(commands=['feeds'])
-        def show_feeds(message):
-            feeds_text = "Aktivaj fontoj de novaĵoj:\n\n"
-            for name, url in FEEDS.items():
-                feeds_text += f"📰 {name}\n{url}\n\n"
-            self.bot.reply_to(message, feeds_text)
+@bot.message_handler(commands=['feeds'])
+def show_feeds(message):
+    feeds_text = "Aktivaj fontoj de novaĵoj:\n\n"
+    for name, url in FEEDS.items():
+        feeds_text += f"📰 {name}\n{url}\n\n"
+    bot.reply_to(message, feeds_text)
 
-        @self.bot.message_handler(commands=['about'])
-        def send_about(message):
-            about_text = """
+@bot.message_handler(commands=['about'])
+def send_about(message):
+    about_text = """
 EoBr-Bot - RSS-Roboto por Esperanto-Novaĵoj
 
 Ĉi tiu roboto aŭtomate kolektas kaj dissendas la plej freŝajn novaĵojn pri Esperanto el diversaj fontoj.
 
 Programita de @vekiano
-            """
-            self.bot.reply_to(message, about_text)
+    """
+    bot.reply_to(message, about_text)
 
-    def check_and_send_updates(self):
+@bot.message_handler(commands=['status'])
+def send_status(message):
+    global last_check
+    status_text = f"""
+Bot Status:
+
+📡 Bot: {BOT_USERNAME}
+🕒 Última verificação: {last_check.strftime('%d/%m/%Y %H:%M:%S')}
+📚 Links processados: {len(posted_links)}
+📰 Feeds monitorados: {len(FEEDS)}
+⏱️ Intervalo: {CHECK_INTERVAL} segundos
+    """
+    bot.reply_to(message, status_text)
+
+def check_feeds():
+    global last_check
+    
+    while True:
         try:
-            last_check = load_last_check()
-            print(f"\n📥 Kontrolas RSS-fluojn je: {datetime.now().strftime('%H:%M:%S')}")
-            
-            for feed_name, feed_url in FEEDS.items():
-                try:
-                    feed = feedparser.parse(feed_url)
-                    if not feed.entries:
-                        print(f"Neniu enigo trovita en: {feed_name}")
-                        continue
-                    
-                    new_entries = []
-                    for entry in feed.entries:
-                        if hasattr(entry, 'published_parsed'):
-                            pub_date = datetime.fromtimestamp(time.mktime(entry.published_parsed))
-                            if pub_date > last_check and not is_already_posted(entry.link):
-                                new_entries.append(entry)
-                    
-                    if not new_entries:
-                        print(f"Neniu nova enigo en: {feed_name}")
-                        continue
+            with lock:
+                current_time = datetime.now()
+                print(f"\n📥 Verificando feeds em: {current_time.strftime('%H:%M:%S')}")
+                
+                for feed_name, feed_url in FEEDS.items():
+                    try:
+                        feed = feedparser.parse(feed_url)
+                        if not feed.entries:
+                            continue
                         
-                    print(f"📬 Trovis {len(new_entries)} novajn enigojn en {feed_name}")
-                    
-                    for entry in new_entries[:5]:
-                        try:
-                            if not is_already_posted(entry.link):
-                                message = format_message(entry, feed_name)
-                                if message:
-                                    print(f"\n📤 Sendas: {entry.title}")
-                                    self.bot.send_message(
-                                        chat_id="@eobr_bot",
-                                        text=message,
-                                        parse_mode='Markdown',
-                                        disable_web_page_preview=False
-                                    )
-                                    save_posted_link(entry.link)
-                                    print("✅ Mesaĝo sukcese sendita!")
-                                    time.sleep(2)
-                            
-                        except Exception as e:
-                            print(f"❌ Eraro dum sendo de mesaĝo: {str(e)}")
-                            
-                except Exception as e:
-                    print(f"❌ Eraro dum kontrolo de fluo {feed_name}: {str(e)}")
-                    continue
-            
-            save_last_check()
-                    
+                        for entry in feed.entries[:5]:
+                            if hasattr(entry, 'published_parsed') and hasattr(entry, 'link'):
+                                pub_date = datetime.fromtimestamp(time.mktime(entry.published_parsed))
+                                
+                                if pub_date > last_check and entry.link not in posted_links:
+                                    message = format_message(entry, feed_name)
+                                    if message:
+                                        try:
+                                            bot.send_message(
+                                                chat_id="@eobr_bot",
+                                                text=message,
+                                                parse_mode='Markdown',
+                                                disable_web_page_preview=False
+                                            )
+                                            posted_links.add(entry.link)
+                                            # Limita o tamanho do set para evitar uso excessivo de memória
+                                            if len(posted_links) > 1000:
+                                                posted_links.clear()
+                                            time.sleep(2)
+                                        except Exception as e:
+                                            print(f"Erro ao enviar mensagem: {str(e)}")
+                                            
+                    except Exception as e:
+                        print(f"Erro ao processar feed {feed_name}: {str(e)}")
+                        continue
+                
+                last_check = current_time
+                
         except Exception as e:
-            print(f"❌ Ĝenerala eraro: {str(e)}")
-
-    def check_feeds(self):
-        while True:
-            try:
-                self.check_and_send_updates()
-                time.sleep(CHECK_INTERVAL)
-            except Exception as e:
-                print(f"❌ Eraro en la ĉefa ciklo: {str(e)}")
-                time.sleep(60)
-
-    def run(self):
-        print("\n=== EoBr-Bot - RSS-Roboto por Esperanto-Novaĵoj ===")
-        print(f"📢 Bot: {BOT_USERNAME}")
-        print(f"🔗 RSS-Fluoj: {len(FEEDS)} configuritaj")
-        print(f"⏱️ Intervalo: {CHECK_INTERVAL} sekundoj")
-
-        feed_thread = threading.Thread(target=self.check_feeds)
-        feed_thread.daemon = True
-        feed_thread.start()
-
-        try:
-            print("✅ Bot iniciado com sucesso!")
-            self.bot.infinity_polling(timeout=60, long_polling_timeout=60)
-        except Exception as e:
-            print(f"❌ Erro no polling: {str(e)}")
-        finally:
-            self.cleanup()
+            print(f"Erro geral: {str(e)}")
+        
+        time.sleep(CHECK_INTERVAL)
 
 if __name__ == "__main__":
-    bot_instance = SingleInstanceBot()
-    bot_instance.run()
+    print("Iniciando EoBr-Bot...")
+    
+    # Inicia verificação de feeds em background
+    import threading
+    feed_thread = threading.Thread(target=check_feeds)
+    feed_thread.daemon = True
+    feed_thread.start()
+    
+    # Inicia o bot com configurações para evitar conflitos
+    bot.infinity_polling(timeout=60, long_polling_timeout=30, allowed_updates=["message"])
