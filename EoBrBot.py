@@ -13,10 +13,38 @@ load_dotenv()
 
 # Configurações do bot
 BOT_TOKEN = os.getenv('BOT_TOKEN')  # Token deve ser configurado no Railway
-CHANNEL_USERNAME = '@esperantobr'
+CHANNEL_USERNAME = '@eobr_bot'  # Mudado para o canal correto
 RSS_URL = 'https://pma.brazilo.org/na-rede/feed'
 CHECK_INTERVAL = 300  # 5 minutos
 TEMP_FILE = '/tmp/last_check.json'  # Arquivo temporário para controle
+HISTORY_FILE = '/tmp/posted_links.json'  # Arquivo para controle de duplicatas
+
+def load_posted_links():
+    """Carrega histórico de links já postados"""
+    try:
+        if os.path.exists(HISTORY_FILE):
+            with open(HISTORY_FILE, 'r') as f:
+                return json.load(f)
+    except:
+        pass
+    return []
+
+def save_posted_link(link):
+    """Salva link no histórico"""
+    try:
+        links = load_posted_links()
+        if link not in links:
+            links.append(link)
+            # Mantém apenas os últimos 100 links
+            links = links[-100:]
+            with open(HISTORY_FILE, 'w') as f:
+                json.dump(links, f)
+    except:
+        pass
+
+def is_already_posted(link):
+    """Verifica se o link já foi postado"""
+    return link in load_posted_links()
 
 def load_last_check():
     """Carrega a data da última verificação"""
@@ -100,7 +128,7 @@ def check_and_send_updates(bot):
         for entry in feed.entries:
             if hasattr(entry, 'published_parsed'):
                 pub_date = datetime.fromtimestamp(time.mktime(entry.published_parsed))
-                if pub_date > last_check:
+                if pub_date > last_check and not is_already_posted(entry.link):
                     new_entries.append(entry)
         
         if not new_entries:
@@ -111,17 +139,19 @@ def check_and_send_updates(bot):
         
         for entry in new_entries[:5]:  # Processa até 5 entradas por vez
             try:
-                message = format_message(entry)
-                if message:
-                    print(f"\n📤 Enviando: {entry.title}")
-                    bot.send_message(
-                        chat_id=CHANNEL_USERNAME,
-                        text=message,
-                        parse_mode='Markdown',
-                        disable_web_page_preview=False
-                    )
-                    print("✅ Mensagem enviada com sucesso!")
-                    time.sleep(2)  # Evita flood
+                if not is_already_posted(entry.link):  # Dupla verificação
+                    message = format_message(entry)
+                    if message:
+                        print(f"\n📤 Enviando: {entry.title}")
+                        bot.send_message(
+                            chat_id=CHANNEL_USERNAME,
+                            text=message,
+                            parse_mode='Markdown',
+                            disable_web_page_preview=False
+                        )
+                        save_posted_link(entry.link)
+                        print("✅ Mensagem enviada com sucesso!")
+                        time.sleep(2)  # Evita flood
                 
             except Exception as e:
                 print(f"❌ Erro ao enviar mensagem: {str(e)}")
@@ -134,7 +164,7 @@ def check_and_send_updates(bot):
 def main():
     """Função principal"""
     print("\n=== Bot RSS do Esperanto Brasil ===")
-    print(f"📢 Canal: {CHANNEL_USERNAME}")
+    print(f"📢 Bot: {CHANNEL_USERNAME}")
     print(f"🔗 Feed: {RSS_URL}")
     print(f"⏱️ Intervalo: {CHECK_INTERVAL} segundos")
     
