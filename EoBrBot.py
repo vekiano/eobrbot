@@ -1,22 +1,16 @@
 import os
 import telebot
 import feedparser
-from flask import Flask, request
-from datetime import datetime, timedelta
 import time
+from datetime import datetime, timedelta
 import re
 from html import unescape
-import threading
 from collections import deque
-
-# Configuração do Flask
-app = Flask(__name__)
 
 # Configurações do bot
 BOT_TOKEN = os.getenv('BOT_TOKEN')
-WEBHOOK_URL = os.getenv('RAILWAY_STATIC_URL', 'https://your-app.up.railway.app')
 BOT_USERNAME = '@eobr_bot'
-CHECK_INTERVAL = 300
+CHECK_INTERVAL = 300  # 5 minutos
 
 # Lista de feeds
 FEEDS = {
@@ -27,10 +21,9 @@ FEEDS = {
 }
 
 # Inicialização
-bot = telebot.TeleBot(BOT_TOKEN)
+bot = telebot.TeleBot(BOT_TOKEN, threaded=False)
+posted_links = deque(maxlen=1000)
 last_check = datetime.now() - timedelta(hours=1)
-posted_links = deque(maxlen=1000)  # Limite de 1000 links
-running = True
 
 def clean_html(text):
     text = re.sub(r'<[^>]+>', '', text)
@@ -70,7 +63,6 @@ def format_message(entry, source_name):
         print(f"Erro ao formatar mensagem: {str(e)}")
         return None
 
-# Comandos do bot
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
     bot.reply_to(message, """
@@ -125,82 +117,58 @@ Bot Status:
 
 def check_feeds():
     global last_check
+    current_time = datetime.now()
     
-    while running:
+    for feed_name, feed_url in FEEDS.items():
         try:
-            current_time = datetime.now()
-            print(f"\n📥 Verificando feeds em: {current_time.strftime('%H:%M:%S')}")
+            feed = feedparser.parse(feed_url)
+            if not feed.entries:
+                continue
             
-            for feed_name, feed_url in FEEDS.items():
-                try:
-                    feed = feedparser.parse(feed_url)
-                    if not feed.entries:
-                        continue
+            for entry in feed.entries[:5]:
+                if hasattr(entry, 'published_parsed') and hasattr(entry, 'link'):
+                    pub_date = datetime.fromtimestamp(time.mktime(entry.published_parsed))
                     
-                    for entry in feed.entries[:5]:
-                        if hasattr(entry, 'published_parsed') and hasattr(entry, 'link'):
-                            pub_date = datetime.fromtimestamp(time.mktime(entry.published_parsed))
-                            
-                            if pub_date > last_check and entry.link not in posted_links:
-                                message = format_message(entry, feed_name)
-                                if message:
-                                    try:
-                                        bot.send_message(
-                                            chat_id="@eobr_bot",
-                                            text=message,
-                                            parse_mode='Markdown',
-                                            disable_web_page_preview=False
-                                        )
-                                        posted_links.append(entry.link)
-                                        time.sleep(2)
-                                    except Exception as e:
-                                        print(f"Erro ao enviar mensagem: {str(e)}")
-                                        
-                except Exception as e:
-                    print(f"Erro ao processar feed {feed_name}: {str(e)}")
-                    continue
-            
-            last_check = current_time
-            
+                    if pub_date > last_check and entry.link not in posted_links:
+                        message = format_message(entry, feed_name)
+                        if message:
+                            try:
+                                bot.send_message(
+                                    chat_id="@eobr_bot",
+                                    text=message,
+                                    parse_mode='Markdown',
+                                    disable_web_page_preview=False
+                                )
+                                posted_links.append(entry.link)
+                                time.sleep(2)
+                            except Exception as e:
+                                print(f"Erro ao enviar mensagem: {str(e)}")
+                                
         except Exception as e:
-            print(f"Erro geral: {str(e)}")
-        
-        time.sleep(CHECK_INTERVAL)
-
-# Configuração do webhook
-@app.route('/' + BOT_TOKEN, methods=['POST'])
-def webhook():
-    try:
-        json_str = request.get_data().decode('UTF-8')
-        update = telebot.types.Update.de_json(json_str)
-        bot.process_new_updates([update])
-        return 'ok', 200
-    except Exception as e:
-        print(f"Erro no webhook: {str(e)}")
-        return 'ok', 200
-
-@app.route('/')
-def home():
-    return 'Bot is running', 200
+            print(f"Erro ao processar feed {feed_name}: {str(e)}")
+            continue
+    
+    last_check = current_time
 
 def main():
-    global running
+    print("\n=== EoBr-Bot - RSS-Roboto por Esperanto-Novaĵoj ===")
+    print(f"📢 Bot: {BOT_USERNAME}")
+    print(f"🔗 RSS-Fluoj: {len(FEEDS)} configuritaj")
+    print(f"⏱️ Intervalo: {CHECK_INTERVAL} segundos")
     
-    # Remove webhook anterior e configura novo
-    bot.remove_webhook()
-    time.sleep(1)
-    bot.set_webhook(url=f'{WEBHOOK_URL}/{BOT_TOKEN}')
-    
-    # Inicia thread de verificação de feeds
-    feed_thread = threading.Thread(target=check_feeds)
-    feed_thread.daemon = True
-    feed_thread.start()
-    
-    # Inicia servidor Flask
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port)
-    
-    running = False
+    while True:
+        try:
+            # Verifica atualizações do bot
+            bot.polling(non_stop=False, interval=0, timeout=30)
+            
+            # Verifica feeds
+            check_feeds()
+            
+            # Aguarda próximo ciclo
+            time.sleep(CHECK_INTERVAL)
+        except Exception as e:
+            print(f"Erro: {str(e)}")
+            time.sleep(60)  # Espera 1 minuto antes de tentar novamente
 
 if __name__ == "__main__":
     main()
