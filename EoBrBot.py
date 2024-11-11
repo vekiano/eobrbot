@@ -33,7 +33,7 @@ FEEDS = {
 
 # Inicialização
 bot = telebot.TeleBot(BOT_TOKEN, threaded=False)
-posted_links = deque(maxlen=500)  # Cache de links já postados
+posted_links = deque(maxlen=500)
 last_check = TIMEZONE_BR.localize(datetime.now() - timedelta(hours=1))
 
 def get_br_time():
@@ -178,28 +178,24 @@ def check_feeds():
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
     """Manipula o comando /start"""
-    welcome_text = """
-Bonvenon al la EoBr-Bot! 🌟
+    welcome_text = """Bonvenon al la EoBr-Bot! 🌟
 
 Mi estas roboto kiu aŭtomate kolektas kaj dissendas Esperantajn novaĵojn.
 
-Uzu /help por vidi ĉiujn komandojn.
-    """
+Uzu /help por vidi ĉiujn komandojn."""
     bot.reply_to(message, welcome_text)
 
 @bot.message_handler(commands=['help'])
 def send_help(message):
     """Manipula o comando /help"""
-    help_text = """
-Disponaj komandoj:
+    help_text = """Disponaj komandoj:
 
 /start - Komenci la boton
 /help - Montri ĉi tiun helpon
 /feeds - Montri ĉiujn fontojn de novaĵoj
 /about - Pri la boto
 /status - Montri la staton de la boto
-/force_check - Devigi kontroli la fluojn
-    """
+/force_check - Devigi kontroli la fluojn"""
     bot.reply_to(message, help_text)
 
 @bot.message_handler(commands=['feeds'])
@@ -213,20 +209,63 @@ def show_feeds(message):
 @bot.message_handler(commands=['about'])
 def send_about(message):
     """Manipula o comando /about"""
-    about_text = """
-EoBr-Bot - RSS-Roboto por Esperanto-Novaĵoj
+    about_text = """EoBr-Bot - RSS-Roboto por Esperanto-Novaĵoj
 
 Ĉi tiu roboto aŭtomate kolektas kaj dissendas la plej freŝajn novaĵojn pri Esperanto el diversaj fontoj.
 
-Programita de @vekiano
-    """
+Programita de @vekiano"""
     bot.reply_to(message, about_text)
 
 @bot.message_handler(commands=['status'])
 def send_status(message):
     """Manipula o comando /status"""
     current_time = get_br_time()
-    status = f"""
-Bot Status:
+    status = f"""Bot Status:
 
-📡 Bot
+📡 Bot: {BOT_USERNAME}
+📢 Canal: {CHANNEL_ID}
+🕒 Horário atual: {current_time.strftime('%d/%m/%Y %H:%M:%S')} (BRT)
+🕒 Última verificação: {last_check.strftime('%d/%m/%Y %H:%M:%S')} (BRT)
+📚 Links processados: {len(posted_links)}
+📰 Feeds monitorados: {len(FEEDS)}
+⏱️ Intervalo: {CHECK_INTERVAL} segundos"""
+    bot.reply_to(message, status)
+
+@bot.message_handler(commands=['force_check'])
+def force_check(message):
+    """Força uma verificação imediata dos feeds"""
+    bot.reply_to(message, "Iniciando verificação forçada dos feeds...")
+    check_feeds()
+    bot.reply_to(message, "Verificação concluída!")
+
+def main():
+    """Função principal"""
+    print("\n=== EoBr-Bot - RSS-Roboto por Esperanto-Novaĵoj ===")
+    print(f"🤖 Iniciando bot em: {get_br_time().strftime('%d/%m/%Y %H:%M:%S')} (BRT)")
+    print(f"📡 Bot: {BOT_USERNAME}")
+    print(f"📢 Canal: {CHANNEL_ID}")
+    print(f"🔗 RSS-Fluoj: {len(FEEDS)} configuritaj")
+    print(f"⏱️ Intervalo: {CHECK_INTERVAL} segundos")
+    
+    # Remove webhook antes de iniciar
+    remove_webhook()
+    
+    while True:
+        try:
+            # Processa mensagens do bot
+            print("\n👂 Aguardando comandos...")
+            bot.polling(non_stop=False, interval=1, timeout=20)
+            
+            # Verifica feeds periodicamente
+            check_feeds()
+            
+            # Aguarda próximo ciclo
+            print(f"\n⏰ Aguardando {CHECK_INTERVAL} segundos...")
+            time.sleep(CHECK_INTERVAL)
+            
+        except Exception as e:
+            print(f"❌ Erro crítico: {str(e)}")
+            time.sleep(60)  # Espera 1 minuto antes de tentar novamente
+
+if __name__ == "__main__":
+    main()
