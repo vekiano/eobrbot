@@ -15,11 +15,11 @@ CHECK_INTERVAL = 300  # 5 minutos
 
 # Lista de feeds
 FEEDS = {
-    'PMA Brazilo': 'https://pma.brazilo.org/na-rede/feed' }
-   # ,'Esperanto Brazilo': 'https://esperantobrazilo.blogspot.com/feeds/posts/default',
-   # 'Esperanto Blogo': 'https://esperanto-blogo.blogspot.com/feeds/posts/default',
-   # 'Brazilaj Babiladoj': 'https://brazilajbabiladoj.blogspot.com/feeds/posts/default'
-
+    'PMA Brazilo': 'https://pma.brazilo.org/na-rede/feed', 
+    'Esperanto Brazilo': 'https://esperantobrazilo.blogspot.com/feeds/posts/default',
+    'Esperanto Blogo': 'https://esperanto-blogo.blogspot.com/feeds/posts/default',
+    'Brazilaj Babiladoj': 'https://brazilajbabiladoj.blogspot.com/feeds/posts/default'
+}
 
 # Inicialização
 bot = telebot.TeleBot(BOT_TOKEN, threaded=False)
