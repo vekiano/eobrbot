@@ -19,7 +19,7 @@ if not BOT_TOKEN:
 
 BOT_USERNAME = '@eobr_bot'
 CHANNEL_ID = '@esperantobr'
-CHECK_INTERVAL = 300  # 5 minutos
+CHECK_INTERVAL = 900  # 15 minutos
 
 # Configuração do timezone
 TIMEZONE_BR = pytz.timezone('America/Sao_Paulo')
@@ -31,14 +31,24 @@ FEEDS = {
     'Esperanto Blogo': 'https://esperanto-blogo.blogspot.com/feeds/posts/default'
 }
 
-# Inicialização com configurações otimizadas para o Railway
+# Inicialização
 bot = telebot.TeleBot(BOT_TOKEN, threaded=False)
-posted_links = deque(maxlen=1000)
-last_check = TIMEZONE_BR.localize(datetime.now() - timedelta(hours=1))  # Reduzido para 1 hora
+posted_links = deque(maxlen=500)  # Cache de links já postados
+last_check = TIMEZONE_BR.localize(datetime.now() - timedelta(hours=1))
 
 def get_br_time():
     """Retorna o horário atual em Brasília"""
     return datetime.now(TIMEZONE_BR)
+
+def remove_webhook():
+    """Remove webhook se existir"""
+    try:
+        print("Removendo webhook...")
+        bot.delete_webhook()
+        time.sleep(1)
+        print("Webhook removido com sucesso!")
+    except Exception as e:
+        print(f"Erro ao remover webhook: {str(e)}")
 
 def parse_date(date_str):
     """Converte string de data para datetime com timezone"""
@@ -81,8 +91,8 @@ def format_message(entry, source_name):
             content = ""
             
         content = clean_html(content)
-        if len(content) > 800:
-            content = content[:800] + "..."
+        if len(content) > 500:
+            content = content[:500] + "..."
             
         message += f"{content}\n\n"
         message += f"[Legi pli →]({entry.link})"
@@ -101,7 +111,7 @@ def format_message(entry, source_name):
         return None
 
 def send_message_to_all(message_text, retry_count=3):
-    """Envia mensagem para todos os destinos com retry e tratamento de erros"""
+    """Envia mensagem para todos os destinos com retry"""
     destinations = [BOT_USERNAME, CHANNEL_ID]
     
     for destination in destinations:
@@ -114,12 +124,12 @@ def send_message_to_all(message_text, retry_count=3):
                     disable_web_page_preview=False
                 )
                 print(f"✅ Mensagem enviada com sucesso para {destination}")
-                time.sleep(2)  # Intervalo entre envios bem-sucedidos
+                time.sleep(2)  # Intervalo entre envios
                 break
             except telebot.apihelper.ApiTelegramException as e:
                 print(f"❌ Erro da API do Telegram ({attempt + 1}/{retry_count}): {str(e)}")
                 if "Too Many Requests" in str(e):
-                    time.sleep(60)  # Espera maior se houver limite de taxa
+                    time.sleep(60)
                 else:
                     time.sleep(5)
             except Exception as e:
@@ -127,7 +137,7 @@ def send_message_to_all(message_text, retry_count=3):
                 time.sleep(5)
 
 def check_feeds():
-    """Verifica e processa feeds RSS com melhor tratamento de erros"""
+    """Verifica e processa feeds RSS"""
     global last_check
     current_time = get_br_time()
     print(f"\n📥 Verificando feeds em: {current_time.strftime('%H:%M:%S')} (BRT)")
@@ -135,7 +145,7 @@ def check_feeds():
     for feed_name, feed_url in FEEDS.items():
         try:
             feed = feedparser.parse(feed_url)
-            if feed.bozo == 1:  # Verifica se houve erro no parse
+            if feed.bozo == 1:
                 print(f"⚠️ Aviso ao processar {feed_name}: {feed.bozo_exception}")
                 continue
             
@@ -144,7 +154,7 @@ def check_feeds():
                 continue
             
             print(f"📚 Processando {feed_name}...")
-            for entry in feed.entries[:5]:
+            for entry in feed.entries[:3]:  # Processa apenas os 3 posts mais recentes
                 if hasattr(entry, 'published') and hasattr(entry, 'link'):
                     pub_date = parse_date(entry.published)
                     
@@ -165,31 +175,58 @@ def check_feeds():
     last_check = current_time
     print(f"✅ Verificação concluída em: {get_br_time().strftime('%H:%M:%S')} (BRT)")
 
-def main():
-    """Função principal com melhor tratamento de erros e logging"""
-    print("\n=== EoBr-Bot - RSS-Roboto por Esperanto-Novaĵoj ===")
-    print(f"🤖 Iniciando bot em: {get_br_time().strftime('%d/%m/%Y %H:%M:%S')} (BRT)")
-    print(f"📡 Bot: {BOT_USERNAME}")
-    print(f"📢 Canal: {CHANNEL_ID}")
-    print(f"🔗 RSS-Fluoj: {len(FEEDS)} configuritaj")
-    print(f"⏱️ Intervalo: {CHECK_INTERVAL} segundos")
-    
-    while True:
-        try:
-            # Processa mensagens do bot
-            print("\n👂 Aguardando comandos...")
-            bot.polling(non_stop=False, interval=1, timeout=20)
-            
-            # Verifica feeds periodicamente
-            check_feeds()
-            
-            # Aguarda próximo ciclo
-            print(f"\n⏰ Aguardando {CHECK_INTERVAL} segundos...")
-            time.sleep(CHECK_INTERVAL)
-            
-        except Exception as e:
-            print(f"❌ Erro crítico: {str(e)}")
-            time.sleep(60)  # Espera 1 minuto antes de tentar novamente
+@bot.message_handler(commands=['start'])
+def send_welcome(message):
+    """Manipula o comando /start"""
+    welcome_text = """
+Bonvenon al la EoBr-Bot! 🌟
 
-if __name__ == "__main__":
-    main()
+Mi estas roboto kiu aŭtomate kolektas kaj dissendas Esperantajn novaĵojn.
+
+Uzu /help por vidi ĉiujn komandojn.
+    """
+    bot.reply_to(message, welcome_text)
+
+@bot.message_handler(commands=['help'])
+def send_help(message):
+    """Manipula o comando /help"""
+    help_text = """
+Disponaj komandoj:
+
+/start - Komenci la boton
+/help - Montri ĉi tiun helpon
+/feeds - Montri ĉiujn fontojn de novaĵoj
+/about - Pri la boto
+/status - Montri la staton de la boto
+/force_check - Devigi kontroli la fluojn
+    """
+    bot.reply_to(message, help_text)
+
+@bot.message_handler(commands=['feeds'])
+def show_feeds(message):
+    """Manipula o comando /feeds"""
+    feeds_text = "Aktivaj fontoj de novaĵoj:\n\n"
+    for name, url in FEEDS.items():
+        feeds_text += f"📰 {name}\n{url}\n\n"
+    bot.reply_to(message, feeds_text)
+
+@bot.message_handler(commands=['about'])
+def send_about(message):
+    """Manipula o comando /about"""
+    about_text = """
+EoBr-Bot - RSS-Roboto por Esperanto-Novaĵoj
+
+Ĉi tiu roboto aŭtomate kolektas kaj dissendas la plej freŝajn novaĵojn pri Esperanto el diversaj fontoj.
+
+Programita de @vekiano
+    """
+    bot.reply_to(message, about_text)
+
+@bot.message_handler(commands=['status'])
+def send_status(message):
+    """Manipula o comando /status"""
+    current_time = get_br_time()
+    status = f"""
+Bot Status:
+
+📡 Bot
